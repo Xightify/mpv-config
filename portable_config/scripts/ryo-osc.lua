@@ -37,12 +37,10 @@ local user_opts = {
     speed_step = 0.1,                      -- speed change for left/right click and mouse wheel
     speed_min = 0.1,                       -- minimum playback speed from speed button
     speed_max = 2.0,                       -- maximum playback speed from speed button
-    audio_button = false,                  -- show audio track button (only if more than 1 audio track exists)
-    audio_button_always_visible = false,   -- always show audio track button when audio exists
-    hide_subtitle_button_when_unavailable = false, -- hide subtitle button when no subtitle tracks exist
+    audio_button = "always",                -- "always" = show when audio exists, "yes" = only when more than 1 audio track exists, "no" = never
+    subtitle_button = "yes",             -- "always" = always show, "yes" = only when subtitle tracks exist, "no" = never
 
-    download_button = true,                -- show download button for YouTube URLs opened through ytdl/yt-dlp
-    hide_download_button_after_download = false, -- hide download button after a successful download
+    download_button = "yes",             -- "always" = keep showing after download, "yes" = hide after download, "no" = never
     download_path = "~/Videos/mpv-downloads/", -- default download directory for videos
 
     seekrange = true,                      -- show seek range overlay
@@ -844,7 +842,7 @@ local function check_path_url()
         state.url_path = path
         msg.info("URL detected.")
 
-        if user_opts.download_button then
+        if user_opts.download_button ~= "no" then
             msg.info("Fetching file size...")
             local command = {
                 "yt-dlp",
@@ -920,6 +918,10 @@ end
 
 local function combined_hover_mode()
     return user_opts.hover_mode == 2
+end
+
+local function combined_controls_visible()
+    return state.osc_visible or state.ani_type ~= nil
 end
 
 local function top_hover_enabled()
@@ -1600,11 +1602,29 @@ end
 -- ryo-osc Layout
 --
 -- Default layout
+local function audio_button_visible()
+    if user_opts.audio_button == "no" then return false end
+    if state.audio_track_count <= 0 then return false end
+    if user_opts.audio_button == "always" then return true end
+    return state.audio_track_count > 1
+end
+
+local function subtitle_button_visible()
+    if user_opts.subtitle_button == "no" then return false end
+    if user_opts.subtitle_button == "always" then return true end
+    return state.sub_track_count > 0
+end
 local function speed_button_visible()
     local mode = user_opts.speed_button
     if mode == "always" then return true end
     if mode == "no" then return false end
     return math.abs((state.speed or 1) - 1) > 0.001
+end
+local function download_button_visible()
+    if user_opts.download_button == "no" then return false end
+    if not is_ytdl_youtube() then return false end
+    if user_opts.download_button == "always" then return true end
+    return not state.downloaded_once
 end
 local function layout_default()
     local chapter_index = (state.chapter or -1) >= 0
@@ -1790,7 +1810,7 @@ local function layout_default()
         end_x = end_x - 55
     end
 
-    elements.audio_track.visible = user_opts.audio_button and (user_opts.audio_button_always_visible or state.audio_track_count > 1) and state.audio_track_count > 0 and osc_geo.w >= 750
+    elements.audio_track.visible = audio_button_visible() and osc_geo.w >= 750
     if elements.audio_track.visible then
         lo = add_layout("audio_track")
         lo.geometry = {x = end_x, y = ref_y - 38, an = 5, w = 24, h = 24}
@@ -1798,20 +1818,14 @@ local function layout_default()
         end_x = end_x - 55
     end
 
-    elements.sub_track.visible =
-        osc_geo.w >= 600 and
-        (
-            not user_opts.hide_subtitle_button_when_unavailable
-            or state.sub_track_count > 0
-        )
+    elements.sub_track.visible = subtitle_button_visible() and osc_geo.w >= 600
     if elements.sub_track.visible then
         lo = add_layout("sub_track")
         lo.geometry = {x = end_x, y = ref_y - 38, an = 5, w = 24, h = 24}
         lo.style = osc_styles.buttons
         end_x = end_x - 55
     end
-    elements.download.visible = user_opts.download_button and is_ytdl_youtube() and
-        not (user_opts.hide_download_button_after_download and state.downloaded_once) and osc_geo.w >= 600
+    elements.download.visible = download_button_visible() and osc_geo.w >= 600
     if elements.download.visible then
         lo = add_layout("download")
         lo.geometry = {x = end_x, y = ref_y - 38, an = 5, w = 24, h = 24}
@@ -1970,8 +1984,7 @@ local function create_elements()
     -- Download indicator, shown only for YouTube URLs opened through ytdl/yt-dlp
     ne = new_element("download", "button")
     ne.hover_effect = true
-    ne.visible = user_opts.download_button and is_ytdl_youtube() and
-        not (user_opts.hide_download_button_after_download and state.downloaded_once)
+    ne.visible = download_button_visible()
     ne.enabled = not state.downloaded_once
     ne.content = function () return state.downloading and icons.downloading or icons.download end
     ne.tooltip_style = osc_styles.tooltip
@@ -2604,6 +2617,9 @@ local function render()
         else
             if state.ani_type == "out" then
                 osc_visible(false)
+                if combined_hover_mode() then
+                    state.wc_visible = false
+                end
             end
             kill_animation()
         end
@@ -2753,7 +2769,7 @@ tick = function()
             osc_visible(false)
         end
         if window_controls_enabled() then
-            state.wc_visible = window_controls_enabled() and (combined_hover_mode() and state.osc_visible or (state.top_hover_visible or state.top_hover_ani_type ~= nil))
+            state.wc_visible = window_controls_enabled() and (combined_hover_mode() and combined_controls_visible() or (state.top_hover_visible or state.top_hover_ani_type ~= nil))
             render()
         else
             render_wipe(state.osd)
@@ -2771,7 +2787,7 @@ tick = function()
             render_wipe(state.logo_osd)
         end
         -- keep wc_visible in sync with osc_visible during normal playback
-        state.wc_visible = window_controls_enabled() and (combined_hover_mode() and state.osc_visible or (state.top_hover_visible or state.top_hover_ani_type ~= nil))
+        state.wc_visible = window_controls_enabled() and (combined_hover_mode() and combined_controls_visible() or (state.top_hover_visible or state.top_hover_ani_type ~= nil))
         -- render the OSC
         render()
     end
@@ -3060,7 +3076,26 @@ local function validate_user_opts()
         msg.warn("speed_button must be 'always', 'yes', or 'no'. Using 'yes'.")
         user_opts.speed_button = "yes"
     end
+    if user_opts.audio_button ~= "always" and
+       user_opts.audio_button ~= "yes" and
+       user_opts.audio_button ~= "no" then
+        msg.warn("audio_button must be 'always', 'yes', or 'no'. Using 'always'.")
+        user_opts.audio_button = "always"
+    end
 
+    if user_opts.subtitle_button ~= "always" and
+       user_opts.subtitle_button ~= "yes" and
+       user_opts.subtitle_button ~= "no" then
+        msg.warn("subtitle_button must be 'always', 'yes', or 'no'. Using 'yes'.")
+        user_opts.subtitle_button = "yes"
+    end
+
+    if user_opts.download_button ~= "always" and
+       user_opts.download_button ~= "yes" and
+       user_opts.download_button ~= "no" then
+        msg.warn("download_button must be 'always', 'yes', or 'no'. Using 'yes'.")
+        user_opts.download_button = "yes"
+    end
     if user_opts.accent_color:find("^#%x%x%x%x%x%x$") == nil then
         msg.warn("'" .. user_opts.accent_color .. "' is not a valid color")
         user_opts.accent_color = "#FFFFFF"
