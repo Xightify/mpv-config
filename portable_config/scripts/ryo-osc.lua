@@ -23,6 +23,7 @@ local user_opts = {
     fadein = true,                         -- whether to enable fade-in effect
     fadeduration = 200,                    -- fade-out duration (in ms), set to 0 for no fade
     minmousemove = 0,                      -- minimum mouse movement (in pixels) required to show OSC
+    selector_menu_osc_hide = "fade",      -- "instant", "fade", or "onmousemovement" after opening selector menus
     hover_mode = 1,                       -- 1 = independent top/bottom zones, 2 = mouse movement shows both
 
     title = "${?demuxer-via-network==yes:${media-title}}${?demuxer-via-network==no:${filename/no-ext}}", -- title above seekbar format: "${media-title}" or "${filename}"
@@ -1856,11 +1857,57 @@ local function osc_visible(visible)
     request_tick()
 end
 
+local function command_hides_osc(command)
+    return command and (
+        command:find("script-binding select/menu", 1, true) or
+        command:find("script-binding select/select-playlist", 1, true) or
+        command:find("script-binding select/select-aid", 1, true) or
+        command:find("script-binding select/select-sid", 1, true)
+    )
+end
+
+local function hide_osc_instant()
+    state.show_time = nil
+    state.osc_visible = false
+    state.wc_visible = false
+    state.top_hover_visible = false
+    kill_animation()
+    kill_top_hover_animation()
+    update_margins()
+    render_wipe(state.osd)
+end
+
+local function fade_osc_now()
+    state.show_time = nil
+    if user_opts.fadeduration > 0 and state.osc_visible then
+        state.ani_start = nil
+        state.ani_type = "out"
+        if combined_hover_mode() and window_controls_enabled() then
+            state.wc_visible = true
+        end
+        request_tick()
+        return
+    end
+
+    hide_osc_instant()
+end
+
+local function hide_osc_after_selector_menu()
+    if user_opts.selector_menu_osc_hide == "onmousemovement" then return end
+    if user_opts.selector_menu_osc_hide == "instant" then
+        hide_osc_instant()
+        return
+    end
+    fade_osc_now()
+end
 local function bind_mouse_buttons(element_name)
     for _, button in ipairs({"mbtn_left", "mbtn_mid", "mbtn_right"}) do
         local up_command = user_opts[element_name .. "_" .. button .. "_command"]
         if up_command ~= nil and up_command ~= "" and up_command ~= "ignore" then
-            elements[element_name].eventresponder[button .. "_up"] = function() mp.command(up_command) end
+            elements[element_name].eventresponder[button .. "_up"] = function()
+                mp.command(up_command)
+                if command_hides_osc(up_command) then hide_osc_after_selector_menu() end
+            end
         end
 
         local down_command = user_opts[element_name .. "_" .. button .. "_down_command"]
@@ -3096,6 +3143,14 @@ local function validate_user_opts()
         msg.warn("download_button must be 'always', 'yes', or 'no'. Using 'yes'.")
         user_opts.download_button = "yes"
     end
+
+    if user_opts.selector_menu_osc_hide ~= "instant" and
+       user_opts.selector_menu_osc_hide ~= "fade" and
+       user_opts.selector_menu_osc_hide ~= "onmousemovement" then
+        msg.warn("selector_menu_osc_hide must be 'instant', 'fade', or 'onmousemovement'. Using 'fade'.")
+        user_opts.selector_menu_osc_hide = "fade"
+    end
+
     if user_opts.accent_color:find("^#%x%x%x%x%x%x$") == nil then
         msg.warn("'" .. user_opts.accent_color .. "' is not a valid color")
         user_opts.accent_color = "#FFFFFF"
